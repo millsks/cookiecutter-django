@@ -12,6 +12,20 @@ Usage:
 
 Requirements:
     pip install requests
+
+Note:
+    This script uses GitHub's sub-issues feature which requires:
+    - GitHub Issues with sub-issues enabled (available via GitHub Issues beta/Projects)
+    - A GitHub Personal Access Token with 'repo' scope
+
+    The sub-issue GraphQL mutations (addSubIssue, removeSubIssue) are part of
+    GitHub's evolving API. If these mutations are not available, the script will
+    still create the Phase issues but won't be able to establish sub-issue
+    relationships automatically.
+
+    Alternative approach: If sub-issues are not available, you can manually
+    link issues by adding task lists in issue bodies:
+    - [ ] #issue_number
 """
 
 from __future__ import annotations
@@ -367,7 +381,12 @@ def get_issue_node_id(issue_number: int) -> str | None:
 
 
 def add_sub_issue(parent_id: str, child_id: str) -> bool:
-    """Add a sub-issue to a parent issue using GraphQL mutation."""
+    """Add a sub-issue to a parent issue using GraphQL mutation.
+
+    Note: This uses GitHub's sub-issues feature which may require
+    GitHub Issues beta or Projects. If the mutation is not available,
+    consider using update_issue_with_task_list() as an alternative.
+    """
     mutation = """
     mutation($parentId: ID!, $childId: ID!) {
         addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
@@ -396,14 +415,23 @@ def add_sub_issue(parent_id: str, child_id: str) -> bool:
 
     data = response.json()
     if "errors" in data:
-        print(f"GraphQL errors: {data['errors']}")
+        error_messages = [e.get("message", "") for e in data["errors"]]
+        # Check if this is because the mutation doesn't exist
+        if any("addSubIssue" in msg or "unknown field" in msg.lower() for msg in error_messages):
+            print("    Note: Sub-issues feature may not be available. Consider manual linking.")
+        else:
+            print(f"GraphQL errors: {data['errors']}")
         return False
 
     return True
 
 
 def remove_sub_issue(parent_id: str, child_id: str) -> bool:
-    """Remove a sub-issue from a parent issue using GraphQL mutation."""
+    """Remove a sub-issue from a parent issue using GraphQL mutation.
+
+    Note: This uses GitHub's sub-issues feature which may require
+    GitHub Issues beta or Projects.
+    """
     mutation = """
     mutation($parentId: ID!, $childId: ID!) {
         removeSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
@@ -432,9 +460,67 @@ def remove_sub_issue(parent_id: str, child_id: str) -> bool:
 
     data = response.json()
     if "errors" in data:
-        print(f"GraphQL errors: {data['errors']}")
+        error_messages = [e.get("message", "") for e in data["errors"]]
+        if any("removeSubIssue" in msg or "unknown field" in msg.lower() for msg in error_messages):
+            print("    Note: Sub-issues feature may not be available.")
+        else:
+            print(f"GraphQL errors: {data['errors']}")
         return False
 
+    return True
+
+
+def update_issue_body(issue_number: int, body: str) -> bool:
+    """Update an issue's body using REST API.
+
+    This can be used as a fallback to add task list references
+    if the sub-issues feature is not available.
+    """
+    url = f"{REST_API_BASE}/repos/{OWNER}/{REPO}/issues/{issue_number}"
+    data = {"body": body}
+
+    response = make_request("PATCH", url, json=data)
+
+    if response.status_code == HTTP_OK:
+        return True
+    print(f"Error updating issue #{issue_number}: {response.status_code}")
+    return False
+
+
+def get_issue(issue_number: int) -> dict | None:
+    """Get issue details using REST API."""
+    url = f"{REST_API_BASE}/repos/{OWNER}/{REPO}/issues/{issue_number}"
+
+    response = make_request("GET", url)
+
+    if response.status_code == HTTP_OK:
+        return response.json()
+    return None
+
+
+def add_task_list_reference(parent_issue_number: int, child_issue_numbers: list[int]) -> bool:
+    """Add task list references to an issue body as a fallback linking method.
+
+    This adds a section like:
+    ## Sub-issues
+    - [ ] #123
+    - [ ] #124
+    """
+    issue = get_issue(parent_issue_number)
+    if not issue:
+        return False
+
+    body = issue.get("body", "") or ""
+
+    # Build task list
+    task_list = "\n\n## Sub-issues\n"
+    for num in child_issue_numbers:
+        task_list += f"- [ ] #{num}\n"
+
+    # Append to body if section doesn't exist
+    if "## Sub-issues" not in body:
+        new_body = body + task_list
+        return update_issue_body(parent_issue_number, new_body)
     return True
 
 
