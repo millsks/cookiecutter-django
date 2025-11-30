@@ -1,0 +1,22 @@
+[project]
+name = "cookiecutter-django-ci"
+
+[tool.pixi]
+# Default environment used by pixi run
+default_env = "ci"
+
+[tool.pixi.envs.ci]
+python = "3.13"
+# Ensure Python runtime packages come from PyPI via pip
+# The 'install' command below will be executed inside the created env
+commands.install = "python -m pip install --upgrade pip setuptools wheel && python -m pip install -r ./generated_requirements.txt"
+
+# Optional conda packages (only used for backend tooling like Valkey/Redos)
+# If empty, Pixi will not attempt to install conda packages by default
+conda_packages = []
+
+# Allow a secondary fallback install for Valkey/Redos via conda-forge if available
+[tool.pixi.extras]
+valkey_conda_channel = "conda-forge"
+valkey_conda_package = "valkey" 
+redos_conda_package = "redos"
